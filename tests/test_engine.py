@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 from stochastic_inference_engine import (
-    FFTDensityRecovery,
     GeometricBrownianMotion,
     Ising1DSampler,
     MonteCarloIntegrator,
@@ -13,13 +12,6 @@ def test_gbm_simulation_shape():
     paths = gbm.simulate(horizon=1.0, steps=100, paths=10)
     assert paths.shape == (101, 10)
     assert np.all(paths[0] == 100.0)
-
-
-def test_fft_density_recovery_mse():
-    _, _, _, mse = FFTDensityRecovery.recover_gbm(
-        x0=100.0, T=1.0, mu=0.05, sigma=0.2, grid_size=2048
-    )
-    assert mse < 1e-4
 
 
 def test_ising_sampler_output():

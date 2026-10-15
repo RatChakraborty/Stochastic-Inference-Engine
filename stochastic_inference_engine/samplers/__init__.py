@@ -1,1 +1,1 @@
-from .mcmc import Ising1DSampler, RandomWalkMetropolis2D
+from .mcmc import Ising1DSampler, RandomWalkMetropolis2D, MCMCDiagnostics

@@ -1,5 +1,6 @@
 README.md
 pyproject.toml
+examples/run_pipeline.py
 stochastic_inference_engine/__init__.py
 stochastic_inference_engine.egg-info/PKG-INFO
 stochastic_inference_engine.egg-info/SOURCES.txt
@@ -13,3 +14,5 @@ stochastic_inference_engine/monte_carlo/__init__.py
 stochastic_inference_engine/monte_carlo/integrator.py
 stochastic_inference_engine/samplers/__init__.py
 stochastic_inference_engine/samplers/mcmc.py
+tests/test_engine.py
+tests/test_gbm.py
