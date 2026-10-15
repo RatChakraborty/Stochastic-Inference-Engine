@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Mapping
+
 import numpy as np
 
 from ..core.results import SimulationResult
@@ -7,13 +10,10 @@ from ..core.results import SimulationResult
 @dataclass(frozen=True)
 class SyntheticDataset:
     """Synthetic positive asset-price paths and return statistics.
-
-    Prices have shape (steps + 1, paths).
-    Returns have shape (steps, paths).
     """
 
     simulation: SimulationResult
-    model_parameters: dict
+    model_parameters: Mapping[str, float]
 
     def __post_init__(self):
         if not isinstance(self.simulation, SimulationResult):
@@ -31,12 +31,10 @@ class SyntheticDataset:
                 "Synthetic asset prices must be positive."
             )
 
-        # Prevent changes to the caller's original dictionary
-        # from changing the dataset metadata.
         object.__setattr__(
             self,
             "model_parameters",
-            self.model_parameters.copy(),
+            MappingProxyType(self.model_parameters.copy()),
         )
 
     @property
@@ -62,18 +60,18 @@ class SyntheticDataset:
 
     @property
     def dt(self) -> float:
-        return float(
-            self.time_grid[-1] / self.n_steps
-        )
+        return float(self.time_grid[-1] / self.n_steps)
 
     @property
     def log_returns(self) -> np.ndarray:
         """Logarithmic returns along the time axis."""
         prices = self.simulation.values
 
-        return np.log(
-            prices[1:] / prices[:-1]
+        simple_returns = (
+            (prices[1:] - prices[:-1]) / prices[:-1]
         )
+
+        return np.log1p(simple_returns)
 
     @property
     def simple_returns(self) -> np.ndarray:
@@ -81,7 +79,7 @@ class SyntheticDataset:
         prices = self.simulation.values
 
         return (
-            prices[1:] / prices[:-1] - 1.0
+            (prices[1:] - prices[:-1]) / prices[:-1]
         )
 
     @property
@@ -107,11 +105,7 @@ class SyntheticDataset:
         self,
         periods_per_year: int = 252,
     ) -> float:
-        """Volatility using a specified observation frequency.
-
-        Appropriate when returns represent equally spaced
-        observations and the scaling assumptions are suitable.
-        """
+        """Volatility using a specified observation frequency."""
         if (
             isinstance(periods_per_year, (bool, np.bool_))
             or not isinstance(
@@ -135,10 +129,14 @@ class SyntheticDataset:
         return {
             "mean": float(np.mean(terminal)),
             "median": float(np.median(terminal)),
-            "std": float(np.std(terminal, ddof=1))
-                if len(terminal) > 1 else 0.0,
+            "std": (
+                float(np.std(terminal, ddof=1))
+                if len(terminal) > 1
+                else 0.0
+            ),
             "min": float(np.min(terminal)),
             "max": float(np.max(terminal)),
             "q05": float(np.quantile(terminal, 0.05)),
             "q95": float(np.quantile(terminal, 0.95)),
         }
+

@@ -286,3 +286,110 @@ def test_invalid_optimization_settings():
             dt=1 / 252,
             maxiter=0,
         )
+
+
+def test_fixed_cutoff_controls_poisson_tail():
+    dt = 0.25
+    max_lambda = 20.0
+    tolerance = 1e-12
+
+    components = MertonCalibrator._component_count(
+        jump_lambda=max_lambda,
+        dt=dt,
+        tail_tolerance=tolerance,
+        max_components=1000,
+    )
+
+    for lam in (0.0, 1.0, 5.0, 10.0, 20.0):
+        omitted_mass = poisson.sf(
+            components - 1,
+            lam * dt,
+        )
+
+        assert omitted_mass <= tolerance
+
+
+def test_fixed_and_adaptive_likelihood_agree():
+    returns = np.array([
+        -0.15, -0.05, 0.01, 0.03, 0.12
+    ])
+
+    dt = 0.25
+
+    parameters = dict(
+        mu=0.08,
+        sigma=0.2,
+        jump_lambda=3.0,
+        jump_mu=-0.1,
+        jump_sigma=0.15,
+    )
+
+    fixed_components = MertonCalibrator._component_count(
+        jump_lambda=20.0,
+        dt=dt,
+        tail_tolerance=1e-12,
+        max_components=1000,
+    )
+
+    adaptive = MertonCalibrator.log_likelihood(
+        returns,
+        dt,
+        **parameters,
+    )
+
+    fixed = MertonCalibrator.log_likelihood(
+        returns,
+        dt,
+        **parameters,
+        _fixed_components=fixed_components,
+    )
+
+    assert fixed == pytest.approx(
+        adaptive,
+        abs=1e-9,
+    )
+
+
+@pytest.mark.parametrize(
+    "tolerance",
+    [0.0, 1.0, -1e-5, np.nan, np.inf],
+)
+def test_invalid_tail_tolerance(tolerance):
+    returns = np.array([0.01, -0.02, 0.03])
+
+    with pytest.raises(ValueError):
+        MertonCalibrator.log_likelihood(
+            returns,
+            dt=1 / 252,
+            mu=0.08,
+            sigma=0.2,
+            jump_lambda=2.0,
+            jump_mu=-0.1,
+            jump_sigma=0.1,
+            tail_tolerance=tolerance,
+        )
+
+    with pytest.raises(ValueError):
+        MertonCalibrator.fit(
+            returns,
+            dt=1 / 252,
+            tail_tolerance=tolerance,
+        )
+
+
+def test_fixed_cutoff_rejects_invalid_values():
+    returns = np.array([0.01, -0.02, 0.03])
+
+    for invalid in (0, -1, 1.5, True, 1001):
+        with pytest.raises(ValueError):
+            MertonCalibrator.log_likelihood(
+                returns,
+                dt=1 / 252,
+                mu=0.08,
+                sigma=0.2,
+                jump_lambda=2.0,
+                jump_mu=-0.1,
+                jump_sigma=0.1,
+                _fixed_components=invalid,
+            )
+

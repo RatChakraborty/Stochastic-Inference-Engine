@@ -1,11 +1,13 @@
 from .comparator import (
-    ModelScore,
-    ModelComparisonResult,
     ModelComparator,
+    ModelComparisonResult,
+    ModelFailure,
+    ModelScore,
 )
 
 __all__ = [
     "ModelScore",
     "ModelComparisonResult",
     "ModelComparator",
+    "ModelFailure",
 ]

@@ -1,4 +1,3 @@
-
 import numpy as np
 
 from scipy.optimize import minimize
@@ -108,21 +107,20 @@ class MertonCalibrator:
 
     @staticmethod
     def log_likelihood(
-        log_returns,
-        dt,
-        mu,
-        sigma,
-        jump_lambda,
-        jump_mu,
-        jump_sigma,
-        tail_tolerance=1e-12,
-        max_components=1000,
-        chunk_size=4096,
+            log_returns,
+            dt,
+            mu,
+            sigma,
+            jump_lambda,
+            jump_mu,
+            jump_sigma,
+            tail_tolerance=1e-12,
+            max_components=1000,
+            chunk_size=4096,
+            *,
+            _fixed_components=None,
     ) -> float:
         """Compute the Merton log-return log-likelihood.
-
-        The infinite Poisson mixture is truncated with
-        controlled omitted probability mass.
         """
 
         returns, dt = GBMCalibrator._validate_returns(
@@ -137,28 +135,70 @@ class MertonCalibrator:
             jump_sigma,
         )
 
-        if not (0 < tail_tolerance < 1):
+        if (
+                isinstance(tail_tolerance, (bool, np.bool_))
+                or not np.isscalar(tail_tolerance)
+        ):
             raise ValueError(
-                "tail_tolerance must be between 0 and 1."
+                "tail_tolerance must be a finite number "
+                "strictly between 0 and 1."
             )
 
-        if max_components < 1 or chunk_size < 1:
+        try:
+            tail_tolerance = float(tail_tolerance)
+        except (TypeError, ValueError, OverflowError):
             raise ValueError(
-                "Component and chunk limits must be positive."
+                "tail_tolerance must be a finite number "
+                "strictly between 0 and 1."
+            ) from None
+
+        if (
+                not np.isfinite(tail_tolerance)
+                or not 0 < tail_tolerance < 1
+        ):
+            raise ValueError(
+                "tail_tolerance must be strictly between 0 and 1."
             )
 
-        n_components = MertonCalibrator._component_count(
-            jump_lambda,
-            dt,
-            tail_tolerance,
-            max_components,
-        )
+        for name, value in (
+                ("max_components", max_components),
+                ("chunk_size", chunk_size),
+        ):
+            if (
+                    isinstance(value, (bool, np.bool_))
+                    or not isinstance(value, (int, np.integer))
+                    or value < 1
+            ):
+                raise ValueError(
+                    f"{name} must be a positive integer."
+                )
+
+        if _fixed_components is None:
+            n_components = MertonCalibrator._component_count(
+                jump_lambda,
+                dt,
+                tail_tolerance,
+                max_components,
+            )
+        else:
+            if (
+                    isinstance(_fixed_components, (bool, np.bool_))
+                    or not isinstance(
+                _fixed_components, (int, np.integer)
+            )
+                    or not 1 <= _fixed_components <= max_components
+            ):
+                raise ValueError(
+                    "_fixed_components must be a positive integer "
+                    "not exceeding max_components."
+                )
+
+            n_components = int(_fixed_components)
 
         k = np.arange(n_components)
 
         mean_count = jump_lambda * dt
 
-        # Expected relative jump size E[J - 1].
         kappa = np.expm1(
             jump_mu + 0.5 * jump_sigma**2
         )
@@ -191,8 +231,6 @@ class MertonCalibrator:
 
         total = 0.0
 
-        # Process observations in batches to avoid allocating
-        # an enormous observations-by-components matrix.
         for start in range(0, returns.size, chunk_size):
             batch = returns[
                 start:start + chunk_size
@@ -254,6 +292,29 @@ class MertonCalibrator:
                 "maxiter must be a positive integer."
             )
 
+        if (
+                isinstance(tail_tolerance, (bool, np.bool_))
+                or not np.isscalar(tail_tolerance)
+        ):
+            raise ValueError(
+                "tail_tolerance must be strictly between 0 and 1."
+            )
+
+        try:
+            tail_tolerance = float(tail_tolerance)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(
+                "tail_tolerance must be strictly between 0 and 1."
+            ) from None
+
+        if (
+                not np.isfinite(tail_tolerance)
+                or not 0 < tail_tolerance < 1
+        ):
+            raise ValueError(
+                "tail_tolerance must be strictly between 0 and 1."
+            )
+
         if bounds is None:
             bounds = MertonCalibrator.DEFAULT_BOUNDS
 
@@ -279,14 +340,21 @@ class MertonCalibrator:
 
         rng = np.random.default_rng(seed)
 
-        # GBM provides an initial estimate of total volatility
-        # and drift, even when jumps are present.
         gbm_fit = GBMCalibrator.fit(returns, dt)
 
         gbm_mu = gbm_fit.parameters["mu"]
         gbm_sigma = gbm_fit.parameters["sigma"]
 
-        # Construct a baseline starting point.
+        lower = bounds[:, 0]
+        upper = bounds[:, 1]
+
+        fixed_components = MertonCalibrator._component_count(
+            jump_lambda=float(upper[2]),
+            dt=dt,
+            tail_tolerance=tail_tolerance,
+            max_components=1000,
+        )
+
         baseline = np.array([
             gbm_mu,
             max(0.5 * gbm_sigma, 0.001),
@@ -295,31 +363,87 @@ class MertonCalibrator:
             max(0.5 * gbm_sigma, 0.01),
         ])
 
-        lower = bounds[:, 0]
-        upper = bounds[:, 1]
+        # Alternative starting points covering different
+        # jump-frequency and jump-size regimes.
 
-        baseline = np.clip(
+        candidate_starts = [
             baseline,
-            lower,
-            upper,
-        )
 
-        starting_points = [baseline]
+            [
+                gbm_mu,
+                0.6 * gbm_sigma,
+                12.0,
+                -0.12,
+                0.12,
+            ],
 
-        for _ in range(n_starts - 1):
+            [
+                gbm_mu,
+                0.7 * gbm_sigma,
+                4.0,
+                -0.10,
+                0.10,
+            ],
+
+            [
+                gbm_mu,
+                0.8 * gbm_sigma,
+                0.5,
+                -0.20,
+                0.15,
+            ],
+
+            [
+                gbm_mu,
+                0.5 * gbm_sigma,
+                20.0,
+                -0.05,
+                0.08,
+            ],
+
+            [
+                gbm_mu,
+                0.7 * gbm_sigma,
+                6.0,
+                0.0,
+                0.15,
+            ],
+
+            [
+                gbm_mu,
+                0.7 * gbm_sigma,
+                4.0,
+                0.10,
+                0.10,
+            ],
+        ]
+
+        starting_points = []
+
+        for candidate in candidate_starts[:n_starts]:
+            starting_points.append(
+                np.clip(
+                    np.asarray(candidate, dtype=float),
+                    lower,
+                    upper,
+                )
+            )
+
+        while len(starting_points) < n_starts:
             candidate = np.array([
                 rng.normal(gbm_mu, 0.1),
                 gbm_sigma * rng.uniform(0.3, 1.2),
-                rng.uniform(0.5, 10.0),
+                rng.uniform(
+                    max(0.0, lower[2]),
+                    upper[2],
+                ),
                 rng.uniform(-0.2, 0.2),
                 gbm_sigma * rng.uniform(0.2, 1.5),
             ])
 
-            candidate = np.clip(
-                candidate, lower, upper
+            starting_points.append(
+                np.clip(candidate, lower, upper)
             )
-
-            starting_points.append(candidate)
 
         def negative_log_likelihood(theta):
             try:
@@ -328,7 +452,9 @@ class MertonCalibrator:
                     dt,
                     *theta,
                     tail_tolerance=tail_tolerance,
+                    _fixed_components=fixed_components,
                 )
+
             except (ValueError, FloatingPointError):
                 return 1e100
 

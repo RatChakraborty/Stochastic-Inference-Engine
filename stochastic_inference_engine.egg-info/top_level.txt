@@ -1,3 +1,1 @@
-examples
 stochastic_inference_engine
-tests

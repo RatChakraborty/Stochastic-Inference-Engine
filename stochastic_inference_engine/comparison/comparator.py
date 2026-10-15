@@ -27,15 +27,29 @@ class ModelScore:
 
 
 @dataclass(frozen=True)
+class ModelFailure:
+    model_name: str
+    stage: str
+    error_type: str
+    message: str
+
+
+@dataclass(frozen=True)
 class ModelComparisonResult:
     scores: tuple[ModelScore, ...]
     n_train: int
     n_test: int
     dt: float
+    failures: tuple[ModelFailure, ...] = ()
 
     @property
     def best_model(self) -> str:
         """Winner by held-out average log-likelihood."""
+        if not self.scores:
+            raise ValueError(
+                "No successful model scores are available."
+            )
+
         return max(
             self.scores,
             key=lambda s: s.test_average_log_likelihood,
@@ -129,52 +143,97 @@ class ModelComparator:
         test = values[split:]
 
         scores = []
+        failures = []
 
         for name in models:
-            if name == "gbm":
-                fitted = GBMCalibrator.fit(
-                    train, dt
-                )
+            # Stage 1: Calibration
+            try:
+                if name == "gbm":
+                    fitted = GBMCalibrator.fit(train, dt)
 
+                elif name == "merton":
+                    fitted = MertonCalibrator.fit(
+                        train,
+                        dt=dt,
+                        n_starts=merton_n_starts,
+                        seed=merton_seed,
+                        maxiter=merton_maxiter,
+                    )
+
+            except (ValueError, RuntimeError, FloatingPointError) as exc:
+                failures.append(
+                    ModelFailure(
+                        model_name=name,
+                        stage="calibration",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                    )
+                )
+                continue
+
+            # Stage 2: Held-out evaluation
+            try:
                 p = fitted.parameters
 
-                test_ll = GBMCalibrator.log_likelihood(
-                    test,
-                    dt=dt,
-                    mu=p["mu"],
-                    sigma=p["sigma"],
-                )
+                if name == "gbm":
+                    test_ll = GBMCalibrator.log_likelihood(
+                        test,
+                        dt=dt,
+                        mu=p["mu"],
+                        sigma=p["sigma"],
+                    )
 
-            elif name == "merton":
-                fitted = MertonCalibrator.fit(
-                    train,
-                    dt=dt,
-                    n_starts=merton_n_starts,
-                    seed=merton_seed,
-                    maxiter=merton_maxiter,
-                )
+                elif name == "merton":
+                    test_ll = MertonCalibrator.log_likelihood(
+                        test,
+                        dt=dt,
+                        mu=p["mu"],
+                        sigma=p["sigma"],
+                        jump_lambda=p["jump_lambda"],
+                        jump_mu=p["jump_mu"],
+                        jump_sigma=p["jump_sigma"],
+                    )
 
-                p = fitted.parameters
+                test_ll = float(test_ll)
 
-                test_ll = MertonCalibrator.log_likelihood(
-                    test,
-                    dt=dt,
-                    mu=p["mu"],
-                    sigma=p["sigma"],
-                    jump_lambda=p["jump_lambda"],
-                    jump_mu=p["jump_mu"],
-                    jump_sigma=p["jump_sigma"],
+                if not math.isfinite(test_ll):
+                    raise ValueError(
+                        "Held-out log-likelihood is not finite."
+                    )
+
+            except (ValueError, RuntimeError, FloatingPointError) as exc:
+                failures.append(
+                    ModelFailure(
+                        model_name=name,
+                        stage="evaluation",
+                        error_type=type(exc).__name__,
+                        message=str(exc),
+                    )
                 )
+                continue
 
             scores.append(
                 ModelScore(
                     model_name=fitted.model_name,
                     calibration=fitted,
-                    test_log_likelihood=float(test_ll),
-                    test_average_log_likelihood=float(
-                        test_ll / test.size
+                    test_log_likelihood=test_ll,
+                    test_average_log_likelihood=(
+                            test_ll / test.size
                     ),
                 )
+            )
+
+        if not scores:
+            details = "; ".join(
+                f"{failure.model_name} "
+                f"({failure.stage}): "
+                f"{failure.error_type}: {failure.message}"
+                for failure in failures
+            )
+
+            raise RuntimeError(
+                "All requested model comparisons failed. "
+                + details
             )
 
         return ModelComparisonResult(
@@ -182,4 +241,5 @@ class ModelComparator:
             n_train=train.size,
             n_test=test.size,
             dt=dt,
+            failures=tuple(failures),
         )

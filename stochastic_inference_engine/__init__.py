@@ -46,6 +46,7 @@ from .comparison import (
     ModelScore,
     ModelComparisonResult,
     ModelComparator,
+    ModelFailure,
 )
 
 __version__ = "0.1.0"
@@ -84,4 +85,5 @@ __all__ = [
     "ModelScore",
     "ModelComparisonResult",
     "ModelComparator",
+    "ModelFailure",
 ]
