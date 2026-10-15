@@ -65,8 +65,8 @@ observations, and comparing statistical models.
 Clone the repository and install it in editable mode:
 
 ```bash
-git clone https://github.com/RatChakraborty/StochasticInferenceEngine.git
-cd StochasticInferenceEngine
+git clone https://github.com/RatChakraborty/Stochastic-Inference-Engine.git
+cd Stochastic-Inference-Engine
 python -m pip install -e ".[dev]"
 ```
 
